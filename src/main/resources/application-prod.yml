@@ -1,0 +1,38 @@
+spring:
+  sql:
+    init:
+      mode: never
+  datasource:
+    url: ${MYSQL_URL}
+    username: ${MYSQL_USERNAME}
+    password: ${MYSQL_PASSWORD}
+  data:
+    redis:
+      host: ${REDIS_HOST}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD}
+
+app:
+  document:
+    storage:
+      endpoint: ${DOCUMENT_STORAGE_ENDPOINT}
+      access-key: ${DOCUMENT_STORAGE_ACCESS_KEY}
+      secret-key: ${DOCUMENT_STORAGE_SECRET_KEY}
+      bucket: ${DOCUMENT_STORAGE_BUCKET:knowledge-source}
+  milvus:
+    uri: ${MILVUS_URI}
+  model:
+    base-url: ${MODEL_BASE_URL}
+    api-key: ${MODEL_API_KEY}
+  indexing:
+    nameserver: ${ROCKETMQ_NAMESERVER}
+  security:
+    user-token: ${APP_USER_TOKEN}
+    admin-token: ${APP_ADMIN_TOKEN}
+    mcp-token: ${MCP_INTERNAL_TOKEN}
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web: INFO
+    org.springframework.jdbc: INFO

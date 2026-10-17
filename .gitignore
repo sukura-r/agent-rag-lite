@@ -1,0 +1,45 @@
+# Build outputs and installed dependencies
+target/
+node_modules/
+dist/
+/src/main/resources/static/console/
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# Local configuration and credentials (examples are safe to commit)
+.env
+.env.*
+!.env.example
+!.env.*.example
+application-local.yml
+application-local.yaml
+*.pem
+*.key
+*.p12
+*.jks
+
+# Runtime data, diagnostics and reproducible experiment caches
+*.log
+logs/
+*.pid
+*.embeddings.npz
+/docs/evaluation-results/rerank-cache-*/
+# Upstream metadata limits these source subsets to local research use.
+/src/main/resources/evaluation/public-duretrieval-*-source.json
+/docs/evaluation-results/public-duretrieval-result.json
+/docs/evaluation-results/public-duretrieval-equal-rrf-result.json
+
+# Editor and local agent state
+.idea/
+.vscode/
+.agents/
+.codex/
+*.iml
+.DS_Store
+Thumbs.db
+*.bak
+*.tmp
+*~

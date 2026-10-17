@@ -1,0 +1,124 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: zhiheng-agent
+  sql:
+    init:
+      mode: always
+      schema-locations: classpath:db/init.sql
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: ${MYSQL_URL:jdbc:mysql://127.0.0.1:23306/agent_rag?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false}
+    username: ${MYSQL_USERNAME:root}
+    password: ${MYSQL_PASSWORD:root}
+    hikari:
+      maximum-pool-size: 10
+      minimum-idle: 2
+      connection-timeout: 3000
+  data:
+    redis:
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:26379}
+      password: ${REDIS_PASSWORD:}
+      timeout: ${REDIS_TIMEOUT:2s}
+  servlet:
+    multipart:
+      max-file-size: ${DOCUMENT_MAX_FILE_SIZE:20MB}
+      max-request-size: ${DOCUMENT_MAX_REQUEST_SIZE:21MB}
+
+app:
+  document:
+    storage:
+      endpoint: ${DOCUMENT_STORAGE_ENDPOINT:http://127.0.0.1:9000}
+      access-key: ${DOCUMENT_STORAGE_ACCESS_KEY:minioadmin}
+      secret-key: ${DOCUMENT_STORAGE_SECRET_KEY:minioadmin}
+      bucket: ${DOCUMENT_STORAGE_BUCKET:knowledge-source}
+    parsing:
+      max-file-bytes: ${DOCUMENT_MAX_FILE_BYTES:20971520}
+      max-characters: ${DOCUMENT_MAX_CHARACTERS:200000}
+      max-chunks: ${DOCUMENT_MAX_CHUNKS:1000}
+      max-pdf-pages: ${DOCUMENT_MAX_PDF_PAGES:300}
+      timeout-seconds: ${DOCUMENT_PARSE_TIMEOUT_SECONDS:60}
+      concurrency: ${DOCUMENT_PARSE_CONCURRENCY:2}
+      max-attempts: ${DOCUMENT_PARSE_MAX_ATTEMPTS:3}
+      poll-delay-ms: ${DOCUMENT_PARSE_POLL_DELAY_MS:1000}
+      lease-seconds: ${DOCUMENT_PARSE_LEASE_SECONDS:120}
+      parser-version: ${DOCUMENT_PARSER_VERSION:tika-3.3.2-markdown-v1}
+  milvus:
+    uri: ${MILVUS_URI:http://127.0.0.1:19530}
+    collection-name: ${MILVUS_COLLECTION:knowledge_chunks_qwen3_1024_v1}
+    dimension: ${EMBEDDING_DIMENSION:1024}
+  chunk:
+    size: ${CHUNK_SIZE:180}
+    overlap: ${CHUNK_OVERLAP:30}
+  model:
+    base-url: ${MODEL_BASE_URL:http://127.0.0.1:11434/v1}
+    # Ollama默认不校验Key；ollama只是OpenAI兼容客户端要求的非空占位值。
+    api-key: ${MODEL_API_KEY:ollama}
+    chat-model: ${CHAT_MODEL:qwen3:4b-instruct}
+    embedding-model: ${EMBEDDING_MODEL:qwen3-embedding:0.6b}
+    timeout-seconds: ${MODEL_TIMEOUT_SECONDS:300}
+    # 企业知识问答默认不启用Qwen3长思考，避免简单事实题在首Token前等待数分钟。
+    reasoning-effort: ${MODEL_REASONING_EFFORT:none}
+    # 最终答案的完整输出上限；若命中上限则任务失败，不能把截断文本标记为完成。
+    max-output-tokens: ${MODEL_MAX_OUTPUT_TOKENS:512}
+    max-attempts: ${MODEL_MAX_ATTEMPTS:2}
+    retry-backoff-ms: ${MODEL_RETRY_BACKOFF_MS:300}
+  agent:
+    max-iterations: ${AGENT_MAX_ITERATIONS:4}
+    history-limit: ${AGENT_HISTORY_LIMIT:10}
+    stream-timeout-ms: ${AGENT_STREAM_TIMEOUT_MS:600000}
+    max-concurrent-tasks: ${AGENT_MAX_CONCURRENT_TASKS:4}
+    event-max-per-task: ${AGENT_EVENT_MAX_PER_TASK:1000}
+    event-retention-days: ${AGENT_EVENT_RETENTION_DAYS:7}
+    event-cleanup-cron: ${AGENT_EVENT_CLEANUP_CRON:0 30 3 * * *}
+    # 合并模型的细粒度文本增量，减少MySQL写入和SSE事件；设为1可恢复逐增量写入基线。
+    token-batch-characters: ${AGENT_TOKEN_BATCH_CHARACTERS:12}
+    token-batch-max-wait-ms: ${AGENT_TOKEN_BATCH_MAX_WAIT_MS:80}
+    # SSE心跳用于保持代理链路活跃，并让服务端更快发现已经失效的订阅连接。
+    heartbeat-interval-ms: ${AGENT_HEARTBEAT_INTERVAL_MS:15000}
+  mcp:
+    enabled: ${MCP_ENABLED:true}
+    server-url: ${MCP_SERVER_URL:http://127.0.0.1:8080/mcp}
+    timeout-ms: ${MCP_TIMEOUT_MS:3000}
+    allowed-tools: ${MCP_ALLOWED_TOOLS:knowledge_search,knowledge_document_get}
+  security:
+    # 本地演示令牌。生产环境必须由登录服务签发短期令牌，并通过密钥管理系统提供服务间密钥。
+    user-token: ${APP_USER_TOKEN:local-user-token}
+    admin-token: ${APP_ADMIN_TOKEN:local-admin-token}
+    mcp-token: ${MCP_INTERNAL_TOKEN:local-mcp-token}
+  retrieval:
+    candidate-k: ${RETRIEVAL_CANDIDATE_K:12}
+    rrf-k: ${RETRIEVAL_RRF_K:60}
+    rerank-candidates: ${RERANK_CANDIDATES:6}
+    rerank-enabled: ${RERANK_ENABLED:true}
+    minimum-vector-score: ${RETRIEVAL_MIN_VECTOR_SCORE:0.5}
+    minimum-keyword-score: ${RETRIEVAL_MIN_KEYWORD_SCORE:2.0}
+  memory:
+    ttl-days: ${MEMORY_TTL_DAYS:30}
+    recall-threshold: ${MEMORY_RECALL_THRESHOLD:0.55}
+  indexing:
+    rocketmq-enabled: ${ROCKETMQ_ENABLED:true}
+    # WSL2或远程部署时通过ROCKETMQ_NAMESERVER环境变量覆盖。
+    nameserver: ${ROCKETMQ_NAMESERVER:127.0.0.1:9876}
+    topic: ${ROCKETMQ_INDEX_TOPIC:agent-rag-document-index}
+    producer-group: ${ROCKETMQ_PRODUCER_GROUP:agent-rag-index-producer}
+    consumer-group: ${ROCKETMQ_CONSUMER_GROUP:agent-rag-index-consumer}
+    relay-delay-ms: ${OUTBOX_RELAY_DELAY_MS:1000}
+    max-attempts: ${INDEX_MAX_ATTEMPTS:3}
+    batch-size: ${INDEX_BATCH_SIZE:20}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+
+logging:
+  level:
+    root: INFO
+    org.springframework.web.client: INFO
+    org.springframework.jdbc.core: INFO
+    org.springframework.web: INFO

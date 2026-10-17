@@ -1,0 +1,5 @@
+# Optional offline evaluation tools; not needed by the Java application.
+numpy
+requests
+pymilvus
+pyarrow
