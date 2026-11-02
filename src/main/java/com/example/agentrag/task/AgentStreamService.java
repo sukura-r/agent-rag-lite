@@ -74,16 +74,13 @@ public class AgentStreamService {
             String existingTask=activeSessionTasks.putIfAbsent(sessionId,lockTaskId);
             if(existingTask!=null)throw new SessionBusyException("当前会话正在生成回答，请等待完成后再提问；如需并行，请新建会话");
             taskId=lockTaskId;sessionLocked=true;
-            conversationService.captureMemory(user.userId(),safeMessage);
-            List<AgentService.HistoryMessage> history=conversationService.context(user.userId(),sessionId,safeMessage);
-            conversationService.append(user.userId(),sessionId,"user",safeMessage);
             String finalTaskId=taskId;String finalSessionId=sessionId;
             taskHistory.create(taskId,user.userId(),sessionId);taskRegistry.running(taskId,user.userId());
             taskStartedAt.put(taskId,System.currentTimeMillis());
             TaskControl control=new TaskControl(sessionId);controls.put(taskId,control);
             FutureTask<Void> future=new FutureTask<>(()->{
                 if(!control.state.compareAndSet(0,1))return null;
-                runTask(finalTaskId,user,finalSessionId,safeMessage,history,control);return null;
+                runTask(finalTaskId,user,finalSessionId,safeMessage,control);return null;
             });
             futures.put(taskId,future);performanceMetrics.started();metricsStarted=true;executor.execute(future);submitted=true;
             return new TaskCreated(taskId,sessionId,"RUNNING");
@@ -125,19 +122,32 @@ public class AgentStreamService {
     }
 
     private String cancelOwnedTask(String taskId){
-        String current=taskRegistry.status(taskId);if(current==null)current=taskHistory.statusAnyOwner(taskId);
-        if(current==null)throw new IllegalArgumentException("任务不存在："+taskId);
-        if(!current.equals("RUNNING")&&!current.equals("CANCEL_REQUESTED"))return current;
-        taskRegistry.requestCancel(taskId);Future<?> future=futures.get(taskId);TaskControl control=controls.get(taskId);
-        boolean cancelAccepted=future!=null&&future.cancel(true);
-        taskRegistry.cancelled(taskId);taskHistory.status(taskId,"CANCELLED",null);
-        // 取消确认后立即允许同一会话创建替代任务；旧线程仍保留并发名额，直到真正退出。
-        if(control!=null)activeSessionTasks.remove(control.sessionId,taskId);
-        if(cancelAccepted&&control!=null&&control.state.compareAndSet(0,2)){
-            try{publish(taskId,"cancelled",Map.of("taskId",taskId,"status","CANCELLED"));}
-            finally{cleanupTaskResources(taskId,control.sessionId);performanceMetrics.cancelled(0,-1);}
+        TaskControl control=controls.get(taskId);
+        if(control==null){
+            String current=taskHistory.statusAnyOwner(taskId);
+            if(current==null)throw new IllegalArgumentException("任务不存在："+taskId);
+            if(isTerminal(current))return current;
+            taskRegistry.cancelled(taskId);taskHistory.status(taskId,"CANCELLED",null);return "CANCELLED";
         }
-        return "CANCELLED";
+        synchronized(control){
+            String current=taskRegistry.status(taskId);if(current==null)current=taskHistory.statusAnyOwner(taskId);
+            if(current==null)throw new IllegalArgumentException("任务不存在："+taskId);
+            if(isTerminal(current))return current;
+            control.cancelRequested=true;
+            taskRegistry.requestCancel(taskId);taskHistory.status(taskId,"CANCEL_REQUESTED",null);
+            Future<?> future=futures.get(taskId);
+            boolean cancelAccepted=future!=null&&future.cancel(true);
+            if(cancelAccepted&&control.state.compareAndSet(0,2)){
+                try{
+                    taskRegistry.cancelled(taskId);taskHistory.status(taskId,"CANCELLED",null);
+                    publish(taskId,"cancelled",Map.of("taskId",taskId,"status","CANCELLED"));
+                }finally{cleanupTaskResources(taskId,control.sessionId);performanceMetrics.cancelled(0,-1);}
+                return "CANCELLED";
+            }
+            // A running Future may report cancelled while its model call is still returning.
+            // Keep its session occupied until runTask actually leaves its processing path.
+            return "CANCEL_REQUESTED";
+        }
     }
 
     public String status(String userId,String taskId){
@@ -169,8 +179,7 @@ public class AgentStreamService {
                 .toList();
     }
 
-    private void runTask(String taskId,AuthenticatedUser user,String sessionId,String message,List<AgentService.HistoryMessage> history,
-                         TaskControl control){
+    private void runTask(String taskId,AuthenticatedUser user,String sessionId,String message,TaskControl control){
         long startedAt=System.currentTimeMillis();AtomicLong firstTokenAt=new AtomicLong(-1);String outcome="FAILED";
         TokenEventBatcher tokenBatcher=new TokenEventBatcher(tokenBatchCharacters,tokenBatchMaxWaitMillis,delta->{
             firstTokenAt.compareAndSet(-1,System.currentTimeMillis());
@@ -178,28 +187,38 @@ public class AgentStreamService {
         });
         try{
             publish(taskId,"task",Map.of("taskId",taskId,"sessionId",sessionId));
+            ensureActive(control);
+            conversationService.captureMemory(user.userId(),sessionId,taskId,message);
+            ensureActive(control);
+            List<AgentService.HistoryMessage> history=conversationService.context(user.userId(),sessionId,message);
+            ensureActive(control);
+            conversationService.append(user.userId(),sessionId,"user",message);
             AgentService.AgentObserver observer=new AgentService.AgentObserver(){
-                public void onPhase(String phase){publish(taskId,"status",Map.of("phase",phase));}
+                public void onPhase(String phase){ensureActive(control);publish(taskId,"status",Map.of("phase",phase));}
                 public void beforeModelCall(int iteration){ }
                 // 工具名、参数和返回内容只保留在服务端审计与Agent内部步骤中，不发给普通用户。
                 public void afterToolCall(int iteration,String toolName,Map<String,Object> arguments,String observationPreview){ }
-                public boolean isCancellationRequested(){return taskRegistry.isCancellationRequested(taskId);}
+                public boolean isCancellationRequested(){return control.cancelRequested||Thread.currentThread().isInterrupted()||taskRegistry.isCancellationRequested(taskId);}
                 public boolean streamModelOutput(){return true;}
-                public void onAnswerDelta(String delta){tokenBatcher.append(delta);}
+                public void onAnswerDelta(String delta){ensureActive(control);tokenBatcher.append(delta);}
             };
             AgentService.AgentAnswer answer=agentService.chat(message,history,observer,user);
-            tokenBatcher.flush();
-            conversationService.append(user.userId(),sessionId,"assistant",answer.answer());
-            publish(taskId,"answer",answer.userView());
-            taskRegistry.completed(taskId);taskHistory.status(taskId,"COMPLETED",null);publish(taskId,"done",Map.of("taskId",taskId,"status","COMPLETED"));outcome="COMPLETED";
+            synchronized(control){
+                ensureActive(control);
+                if(taskRegistry.isCancellationRequested(taskId))throw new CancellationException("任务已请求取消");
+                tokenBatcher.flush();
+                conversationService.append(user.userId(),sessionId,"assistant",answer.answer());
+                publish(taskId,"answer",answer.userView());
+                taskRegistry.completed(taskId);taskHistory.status(taskId,"COMPLETED",null);
+                publish(taskId,"done",Map.of("taskId",taskId,"status","COMPLETED"));outcome="COMPLETED";
+            }
         }catch(CancellationException e){
-            tokenBatcher.flush();
-            taskRegistry.cancelled(taskId);taskHistory.status(taskId,"CANCELLED",null);publish(taskId,"cancelled",Map.of("taskId",taskId,"status","CANCELLED"));outcome="CANCELLED";
+            completeCancellation(taskId);outcome="CANCELLED";
         }catch(Exception e){
-            tokenBatcher.flush();
-            if(taskRegistry.isCancellationRequested(taskId)||Thread.currentThread().isInterrupted()){
-                taskRegistry.cancelled(taskId);taskHistory.status(taskId,"CANCELLED",null);publish(taskId,"cancelled",Map.of("taskId",taskId,"status","CANCELLED"));outcome="CANCELLED";
+            if(control.cancelRequested||taskRegistry.isCancellationRequested(taskId)||Thread.currentThread().isInterrupted()){
+                completeCancellation(taskId);outcome="CANCELLED";
             }else{
+                tokenBatcher.flush();
                 taskRegistry.failed(taskId);taskHistory.status(taskId,"FAILED",e.getMessage());publish(taskId,"error",Map.of("taskId",taskId,"message",e.getMessage()==null?e.getClass().getSimpleName():e.getMessage()));
             }
         }finally{
@@ -208,6 +227,21 @@ public class AgentStreamService {
             long first=firstTokenAt.get()<0?-1:firstTokenAt.get()-startedAt;
             if("COMPLETED".equals(outcome))performanceMetrics.completed(duration,first);else if("CANCELLED".equals(outcome))performanceMetrics.cancelled(duration,first);else performanceMetrics.failed(duration,first);
         }
+    }
+
+    private void ensureActive(TaskControl control){
+        if(control.cancelRequested||Thread.currentThread().isInterrupted())throw new CancellationException("任务已请求取消");
+    }
+
+    private void completeCancellation(String taskId){
+        // Cancellation interrupts the worker. Redis/JDBC must still be allowed to persist
+        // the terminal state and replayable event before the worker leaves.
+        boolean interrupted=Thread.interrupted();
+        try{
+            taskRegistry.cancelled(taskId);
+            taskHistory.status(taskId,"CANCELLED",null);
+            publish(taskId,"cancelled",Map.of("taskId",taskId,"status","CANCELLED"));
+        }finally{if(interrupted)Thread.currentThread().interrupt();}
     }
 
     private void publish(String taskId,String event,Object data){
@@ -224,7 +258,7 @@ public class AgentStreamService {
     private void send(String taskId,Subscriber subscriber,int sequence,String event,Object data){
         while(true){int previous=subscriber.lastSent().get();if(sequence<=previous)return;if(subscriber.lastSent().compareAndSet(previous,sequence))break;}
         try{subscriber.emitter().send(SseEmitter.event().id(String.valueOf(sequence)).name(event).data(data));}
-        catch(IOException|IllegalStateException e){removeSubscriber(taskId,subscriber);subscriber.emitter().complete();}
+        catch(IOException|IllegalStateException e){disconnect(taskId,subscriber);}
     }
 
     @Scheduled(fixedDelayString="${app.agent.heartbeat-interval-ms:15000}")
@@ -232,8 +266,13 @@ public class AgentStreamService {
         long now=System.currentTimeMillis();
         subscribers.forEach((taskId,list)->list.forEach(subscriber->{
             try{subscriber.emitter().send(SseEmitter.event().name("heartbeat").data(Map.of("time",now)));}
-            catch(IOException|IllegalStateException e){removeSubscriber(taskId,subscriber);subscriber.emitter().complete();}
+            catch(IOException|IllegalStateException e){disconnect(taskId,subscriber);}
         }));
+    }
+
+    private void disconnect(String taskId,Subscriber subscriber){
+        removeSubscriber(taskId,subscriber);
+        try{subscriber.emitter().complete();}catch(IllegalStateException ignored){/* Container already closed it. */}
     }
 
     private void removeSubscriber(String taskId,Subscriber subscriber){var list=subscribers.get(taskId);if(list==null)return;list.remove(subscriber);if(list.isEmpty())subscribers.remove(taskId,list);}
@@ -249,6 +288,7 @@ public class AgentStreamService {
     private static final class TaskControl{
         private final String sessionId;
         private final AtomicInteger state=new AtomicInteger(0); // 0等待执行，1正在执行，2已清理
+        private volatile boolean cancelRequested;
         private TaskControl(String sessionId){this.sessionId=sessionId;}
     }
     private record Subscriber(SseEmitter emitter,AtomicInteger lastSent){Subscriber(SseEmitter emitter,int last){this(emitter,new AtomicInteger(last));}}

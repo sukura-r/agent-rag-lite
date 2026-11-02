@@ -1,7 +1,4 @@
-CREATE DATABASE IF NOT EXISTS agent_rag DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-
-USE agent_rag;
-
+-- 在数据源或 MYSQL_DATABASE 指定的数据库中初始化表结构。
 CREATE TABLE IF NOT EXISTS knowledge_document (
     id VARCHAR(32) PRIMARY KEY,
     title VARCHAR(255) NOT NULL,
@@ -83,6 +80,16 @@ CREATE TABLE IF NOT EXISTS user_memory (
     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uk_user_memory_key(user_id, memory_key),
     KEY idx_memory_user_status(user_id, status, expires_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS user_memory_evidence (
+    memory_id VARCHAR(32) PRIMARY KEY,
+    source_task_id VARCHAR(32) NULL,
+    session_id VARCHAR(32) NULL,
+    source_text VARCHAR(1000) NOT NULL,
+    origin VARCHAR(32) NOT NULL,
+    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    CONSTRAINT fk_memory_evidence FOREIGN KEY(memory_id) REFERENCES user_memory(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS security_audit_log (

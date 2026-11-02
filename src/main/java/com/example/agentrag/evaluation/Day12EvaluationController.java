@@ -1,9 +1,12 @@
 package com.example.agentrag.evaluation;
 
 import com.example.agentrag.common.ApiResponse;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnResource;
 import org.springframework.web.bind.annotation.*;
 
 @RestController
+@ConditionalOnResource(resources = {"classpath:evaluation/day6-corpus.json", "classpath:evaluation/day6-queries.json",
+        "classpath:evaluation/day12-corpus.json", "classpath:evaluation/day12-queries.json"})
 @RequestMapping("/api/evaluation/day12")
 public class Day12EvaluationController {
     private final Day12DatasetService dataset;

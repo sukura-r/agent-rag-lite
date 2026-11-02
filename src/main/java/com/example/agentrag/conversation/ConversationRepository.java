@@ -78,9 +78,10 @@ public class ConversationRepository {
     }
 
     public List<MessageRecord> findMessagesBeforeRecentWindow(String sessionId, int recentLimit) {
-        return jdbcTemplate.query("SELECT id,session_id,seq_no,role,content,created_at FROM conversation_message "
+        return jdbcTemplate.query("SELECT id,session_id,seq_no,role,content,created_at FROM ("
+                        + "SELECT id,session_id,seq_no,role,content,created_at FROM conversation_message "
                         + "WHERE session_id=? AND seq_no <= GREATEST((SELECT COALESCE(MAX(seq_no),0) FROM conversation_message WHERE session_id=?)-?,0) "
-                        + "ORDER BY seq_no",
+                        + "ORDER BY seq_no DESC LIMIT 32) older ORDER BY seq_no",
                 (rs, rowNum) -> new MessageRecord(rs.getString("id"), rs.getString("session_id"),
                         rs.getInt("seq_no"), rs.getString("role"), rs.getString("content"),
                         rs.getTimestamp("created_at").toLocalDateTime()), sessionId, sessionId, recentLimit);

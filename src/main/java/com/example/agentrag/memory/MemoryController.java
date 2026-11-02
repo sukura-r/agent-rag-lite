@@ -43,6 +43,13 @@ public class MemoryController {
         return ApiResponse.success("DELETED");
     }
 
+    @GetMapping("/{memoryId}/source")
+    public ApiResponse<MemoryRepository.MemoryEvidence> source(
+            @RequestAttribute(ApiSecurityFilter.USER_ATTRIBUTE) AuthenticatedUser user,
+            @PathVariable String memoryId) {
+        return ApiResponse.success(memoryService.evidence(user.userId(), memoryId));
+    }
+
     public record MemoryView(String id, String key, String content,
                              LocalDateTime expiresAt, LocalDateTime createdAt,
                              LocalDateTime updatedAt) {}

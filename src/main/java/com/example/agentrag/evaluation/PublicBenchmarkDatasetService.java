@@ -96,7 +96,7 @@ public class PublicBenchmarkDatasetService {
         try (var input = new ClassPathResource(path).getInputStream()) {
             return objectMapper.readTree(input);
         } catch (IOException exception) {
-            throw new IllegalStateException("读取本地公开评测资源失败：" + path + "；请参阅 docs/DATA-SOURCES.md 准备数据", exception);
+            throw new IllegalStateException("评测资源不存在或无法读取：" + path, exception);
         }
     }
 

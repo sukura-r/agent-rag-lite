@@ -23,19 +23,19 @@ public class HybridRetrievalService {
     private final EmbeddingService embeddingService;
     private final VectorStore vectorStore;
     private final KnowledgeRepository repository;
-    private final Bm25Retriever bm25Retriever;
     private final LlmReranker reranker;
     private final RetrievalProperties properties;
+    private final ReadyBm25Index keywordIndex;
 
     public HybridRetrievalService(EmbeddingService embeddingService, VectorStore vectorStore,
                                   KnowledgeRepository repository, Bm25Retriever bm25Retriever,
-                                  LlmReranker reranker, RetrievalProperties properties) {
+                                  LlmReranker reranker, RetrievalProperties properties, ReadyBm25Index keywordIndex) {
         this.embeddingService = embeddingService;
         this.vectorStore = vectorStore;
         this.repository = repository;
-        this.bm25Retriever = bm25Retriever;
         this.reranker = reranker;
         this.properties = properties;
+        this.keywordIndex = keywordIndex;
     }
 
     public RetrievalStages retrieveStages(String query) {
@@ -45,15 +45,28 @@ public class HybridRetrievalService {
     public RetrievalStages retrieveStages(String query, Set<String> allowedDocumentIds) {
         long started = System.nanoTime();
         int candidateK = properties.candidateK();
-        List<KnowledgeRepository.ChunkRecord> corpus = repository.findAllReadyChunks().stream()
-                .filter(chunk -> allowedDocumentIds == null || allowedDocumentIds.contains(chunk.documentId()))
-                .toList();
+        Bm25Retriever.SearchIndex index = keywordIndex.snapshot().index();
+        List<Bm25Retriever.ScoredChunk> keywordHits = index.search(query, allowedDocumentIds, candidateK);
         long corpusReady = System.nanoTime();
-        int vectorCandidateK = allowedDocumentIds == null ? candidateK : Math.max(candidateK, corpus.size() * 3);
-        List<VectorStore.VectorHit> vectorHits = vectorStore.search(embeddingService.embed(query), vectorCandidateK);
+        int vectorCandidateK = allowedDocumentIds == null ? candidateK
+                : Math.min(16384, Math.max(candidateK, index.chunkCount(allowedDocumentIds) * 3));
+        List<VectorStore.VectorHit> vectorHits;
+        boolean vectorFailed = false;
+        try {
+            vectorHits = vectorStore.search(embeddingService.embed(query), vectorCandidateK);
+        } catch (java.util.concurrent.CancellationException cancelled) {
+            throw cancelled;
+        } catch (RuntimeException failure) {
+            vectorFailed = true;
+            vectorHits = List.of();
+            log.warn("向量召回不可用，本轮使用关键词召回：{}", failure.getClass().getSimpleName());
+        }
         long vectorReady = System.nanoTime();
         Map<String, KnowledgeRepository.ChunkRecord> byId = new HashMap<>();
-        repository.findChunks(vectorHits.stream().map(VectorStore.VectorHit::chunkId).toList())
+        Set<String> ids = new java.util.LinkedHashSet<>();
+        vectorHits.forEach(hit -> ids.add(hit.chunkId()));
+        keywordHits.forEach(hit -> ids.add(hit.chunk().id()));
+        repository.findChunks(List.copyOf(ids))
                 .forEach(chunk -> byId.put(chunk.id(), chunk));
         List<RetrievalCandidate> vector = vectorHits.stream()
                 .filter(hit -> byId.containsKey(hit.chunkId()))
@@ -64,14 +77,14 @@ public class HybridRetrievalService {
                 .toList();
         long hydrated = System.nanoTime();
 
-        List<Bm25Retriever.ScoredChunk> keywordHits = bm25Retriever.search(query, corpus, candidateK);
         List<RetrievalCandidate> keyword = keywordHits.stream()
-                .map(hit -> new RetrievalCandidate(hit.chunk(), 0, hit.score(), 0, 0)).toList();
+                .filter(hit -> byId.containsKey(hit.chunk().id()))
+                .map(hit -> new RetrievalCandidate(byId.get(hit.chunk().id()), 0, hit.score(), 0, 0)).toList();
 
         List<RetrievalCandidate> fused = fuse(vector, keyword, properties.rrfK());
         List<RetrievalCandidate> rerankInput = fused.stream().limit(properties.rerankCandidates()).toList();
         long fusionReady = System.nanoTime();
-        boolean rerankApplied = properties.rerankEnabled() && shouldRerank(vector, keyword, rerankInput);
+        boolean rerankApplied = !vectorFailed && properties.rerankEnabled() && shouldRerank(vector, keyword, rerankInput);
         List<RetrievalCandidate> reranked = rerankApplied
                 ? reranker.rerank(query, rerankInput) : rerankInput;
         long finished = System.nanoTime();

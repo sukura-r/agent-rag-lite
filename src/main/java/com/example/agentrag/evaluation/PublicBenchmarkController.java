@@ -1,6 +1,7 @@
 package com.example.agentrag.evaluation;
 
 import com.example.agentrag.common.ApiResponse;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnResource;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -9,6 +10,9 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
+@ConditionalOnResource(resources = {"classpath:evaluation/public-duretrieval-corpus-source.json",
+        "classpath:evaluation/public-duretrieval-queries-source.json", "classpath:evaluation/public-duretrieval-qrels-source.json",
+        "classpath:evaluation/public-duretrieval-metadata.json"})
 @RequestMapping("/api/evaluation/public")
 public class PublicBenchmarkController {
 

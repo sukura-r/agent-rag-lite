@@ -97,6 +97,10 @@ app:
     minimum-vector-score: ${RETRIEVAL_MIN_VECTOR_SCORE:0.5}
     minimum-keyword-score: ${RETRIEVAL_MIN_KEYWORD_SCORE:2.0}
   memory:
+    auto-capture-enabled: ${MEMORY_AUTO_CAPTURE_ENABLED:true}
+    llm-extraction-enabled: ${MEMORY_LLM_EXTRACTION_ENABLED:true}
+    extraction-timeout-ms: ${MEMORY_EXTRACTION_TIMEOUT_MS:5000}
+    max-recall-candidates: ${MEMORY_MAX_RECALL_CANDIDATES:200}
     ttl-days: ${MEMORY_TTL_DAYS:30}
     recall-threshold: ${MEMORY_RECALL_THRESHOLD:0.55}
   indexing:

@@ -128,7 +128,7 @@ public class VectorStore {
         List<BaseVector> vectors = List.of(new FloatVec(vector));
         Map<String, Object> params = new HashMap<>();
         params.put("metric_type", "COSINE");
-        params.put("ef", 64);
+        params.put("ef", Math.max(64, topK));
         SearchResp response = client.search(SearchReq.builder()
                 .collectionName(collectionName)
                 .annsField("embedding")

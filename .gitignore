@@ -26,11 +26,8 @@ application-local.yaml
 logs/
 *.pid
 *.embeddings.npz
-/docs/evaluation-results/rerank-cache-*/
-# Upstream metadata limits these source subsets to local research use.
-/src/main/resources/evaluation/public-duretrieval-*-source.json
-/docs/evaluation-results/public-duretrieval-result.json
-/docs/evaluation-results/public-duretrieval-equal-rrf-result.json
+/src/main/resources/evaluation/
+/src/test/
 
 # Editor and local agent state
 .idea/
@@ -43,3 +40,16 @@ Thumbs.db
 *.bak
 *.tmp
 *~
+
+/application.yml
+/application.yaml
+/*-result.json
+
+/docs/
+/scripts/
+/infra/
+/测试/
+/tests/
+/VALIDATION.md
+/DATA-SOURCES.md
+/启动说明.md

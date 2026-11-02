@@ -2,6 +2,8 @@ package com.example.agentrag.knowledge;
 
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Isolation;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -106,6 +108,17 @@ public class KnowledgeRepository {
                         rs.getInt("chunk_index"), rs.getString("content"), rs.getString("title")));
     }
 
+    public List<ReadyVersion> findReadyVersions() {
+        return jdbcTemplate.query("SELECT id,active_version_no FROM knowledge_document "
+                        + "WHERE status='READY' AND active_version_no>0 ORDER BY id",
+                (rs, n) -> new ReadyVersion(rs.getString("id"), rs.getInt("active_version_no")));
+    }
+
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public ReadyCorpus loadReadyCorpus() {
+        return new ReadyCorpus(findReadyVersions(), findAllReadyChunks());
+    }
+
     public List<ChunkRecord> findReadyDocumentChunks(String documentId) {
         return jdbcTemplate.query("SELECT c.id,c.document_id,c.chunk_index,c.content,v.title "
                         + "FROM knowledge_chunk c JOIN knowledge_document d ON d.id=c.document_id "
@@ -178,6 +191,9 @@ public class KnowledgeRepository {
 
     public record ChunkRecord(String id, String documentId, int chunkIndex, String content, String title) {
     }
+
+    public record ReadyVersion(String documentId, int version) { }
+    public record ReadyCorpus(List<ReadyVersion> versions, List<ChunkRecord> chunks) { }
 
     public record DatasetStatistics(int documentCount, long totalCharacters, long totalChunks, int domainCount) {
     }
